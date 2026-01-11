@@ -13,20 +13,19 @@ What You'll Learn:
 Prerequisites: Complete part-1 first
 """
 
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for
 import sqlite3
+import os
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Required for flash messages
 
-DATABASE = 'students.db'
-
+# Database file
+DATABASE = os.path.join(os.path.dirname(__file__), 'students_art2.db')
 
 def get_db_connection():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def init_db():
     conn = get_db_connection()
@@ -34,94 +33,97 @@ def init_db():
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            email TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
             course TEXT NOT NULL
         )
     ''')
     conn.commit()
     conn.close()
 
-
-# =============================================================================
-# CREATE - Add new student
-# =============================================================================
-
-@app.route('/add', methods=['GET', 'POST'])  # Allow both GET and POST
+# -----------------------
+# CREATE - Add student
+# -----------------------
+@app.route('/add', methods=['GET', 'POST'])
 def add_student():
-    if request.method == 'POST':  # Form was submitted
-        name = request.form['name']  # Get data from form field named 'name'
-        email = request.form['email']
-        course = request.form['course']
-
-        conn = get_db_connection()
-        conn.execute(
-            'INSERT INTO students (name, email, course) VALUES (?, ?, ?)',
-            (name, email, course)
-        )
-        conn.commit()
-        conn.close()
-
-        flash('Student added successfully!', 'success')  # Show success message
-        return redirect(url_for('index'))  # Go back to home page
-
-    return render_template('add.html')  # GET request: show empty form
-
-
-# =============================================================================
-# READ - Display all students
-# =============================================================================
-
-@app.route('/')
-def index():
-    conn = get_db_connection()
-    students = conn.execute('SELECT * FROM students ORDER BY id DESC').fetchall()  # Newest first
-    conn.close()
-    return render_template('index.html', students=students)
-
-
-# =============================================================================
-# UPDATE - Edit existing student
-# =============================================================================
-
-@app.route('/edit/<int:id>', methods=['GET', 'POST'])
-def edit_student(id):
-    conn = get_db_connection()
-
-    if request.method == 'POST':  # Form submitted with new data
+    if request.method == 'POST':
         name = request.form['name']
         email = request.form['email']
         course = request.form['course']
 
-        conn.execute(
-            'UPDATE students SET name = ?, email = ?, course = ? WHERE id = ?',
-            (name, email, course, id)  # Update WHERE id matches
-        )
+        conn = get_db_connection()
+        # Check duplicate email silently
+        existing = conn.execute('SELECT * FROM students WHERE email = ?', (email,)).fetchone()
+        if existing:
+            conn.close()
+            return redirect(url_for('add_student'))
+
+        conn.execute('INSERT INTO students (name, email, course) VALUES (?, ?, ?)',
+                     (name, email, course))
         conn.commit()
         conn.close()
 
-        flash('Student updated successfully!', 'success')
         return redirect(url_for('index'))
 
-    # GET request: fetch current data and show in form
+    return render_template('add.html')
+
+# -----------------------
+# READ - Show all + search
+# -----------------------
+@app.route('/', methods=['GET'])
+def index():
+    query = request.args.get('query', '')
+    conn = get_db_connection()
+
+    if query:
+        students = conn.execute(
+            'SELECT * FROM students WHERE name LIKE ? ORDER BY id DESC',
+            ('%' + query + '%',)
+        ).fetchall()
+    else:
+        students = conn.execute('SELECT * FROM students ORDER BY id DESC').fetchall()
+
+    conn.close()
+    return render_template('index.html', students=students, query=query)
+
+# -----------------------
+# UPDATE - Edit student
+# -----------------------
+@app.route('/edit/<int:id>', methods=['GET', 'POST'])
+def edit_student(id):
+    conn = get_db_connection()
     student = conn.execute('SELECT * FROM students WHERE id = ?', (id,)).fetchone()
+
+    if request.method == 'POST':
+        name = request.form['name']
+        email = request.form['email']
+        course = request.form['course']
+
+        # Check duplicate email silently
+        existing = conn.execute('SELECT * FROM students WHERE email = ? AND id != ?', (email, id)).fetchone()
+        if existing:
+            conn.close()
+            return redirect(url_for('edit_student', id=id))
+
+        conn.execute('UPDATE students SET name=?, email=?, course=? WHERE id=?',
+                     (name, email, course, id))
+        conn.commit()
+        conn.close()
+
+        return redirect(url_for('index'))
+
     conn.close()
     return render_template('edit.html', student=student)
 
-
-# =============================================================================
+# -----------------------
 # DELETE - Remove student
-# =============================================================================
-
+# -----------------------
 @app.route('/delete/<int:id>')
 def delete_student(id):
     conn = get_db_connection()
-    conn.execute('DELETE FROM students WHERE id = ?', (id,))  # Remove row
+    conn.execute('DELETE FROM students WHERE id=?', (id,))
     conn.commit()
     conn.close()
-
-    flash('Student deleted!', 'danger')  # Show delete message
     return redirect(url_for('index'))
-
 
 if __name__ == '__main__':
     init_db()
